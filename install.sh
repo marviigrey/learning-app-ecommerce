@@ -1,188 +1,138 @@
-#!/bin/bash
-#
-# Automate ECommerce Application Deployment
-# Author: Mumshad Mannambeth
-
-#######################################
-# Print a message in a given color.
-# Arguments:
-#   Color. eg: green, red
-#######################################
-function print_color(){
-  NC='\033[0m' # No Color
-
+#!bin/bash
+#the print_color functions helps to identify if a service is installed or running with the help of colors.
+function print_color() {
   case $1 in
-    "green") COLOR='\033[0;32m' ;;
-    "red") COLOR='\033[0;31m' ;;
-    "*") COLOR='\033[0m' ;;
+  "green") COLOR="\033[0;32m"
+  ;;
+  "red") COLOR="\033[0;31m"
+  ;;
+  "*") COLOR="\033[0m"
+  ;;
   esac
-
   echo -e "${COLOR} $2 ${NC}"
 }
 
-#######################################
-# Check the status of a given service. If not active exit script
-# Arguments:
-#   Service Name. eg: firewalld, mariadb
-#######################################
-function check_service_status(){
-  service_is_active=$(sudo systemctl is-active $1)
+function active_state() {
+ is_service_active=$(systemctl is-active $1)
+if [ $is_service_active = "active" ]
+then
+  print_color "green" "$1 is active"
+else
+  print_color "red" "$1 is not running"
+  exit 1
+fi
+}
 
-  if [ $service_is_active = "active" ]
-  then
-    echo "$1 is active and running"
-  else
-    echo "$1 is not active/running"
+function firewalld_port_rule() {
+if [[ $firewalld_ports = *$1* ]]
+then 
+    print_color "green" "port $1 configured"
+else
+    print_color "red" "port $1 not configured"
     exit 1
-  fi
+fi
 }
 
-#######################################
-# Check the status of a firewalld rule. If not configured exit.
-# Arguments:
-#   Port Number. eg: 3306, 80
-#######################################
-function is_firewalld_rule_configured(){
+function check_item() {
+  webpage=$(curl http://localhost)
 
-  firewalld_ports=$(sudo firewall-cmd --list-all --zone=public | grep ports)
-
-  if [[ $firewalld_ports == *$1* ]]
-  then
-    echo "FirewallD has port $1 configured"
-  else
-    echo "FirewallD port $1 is not configured"
-    exit 1
-  fi
+if [[ $1 = *$2* ]]
+then
+  print_color "green" "Item $2 is available"
+else 
+    print_color "red" "Item $2 is not available"
+fi
 }
+#---------Database configuration--------------
+#install and configure FirewallD
 
-#######################################
-# Check if a given item is present in an output
-# Arguments:
-#   1 - Output
-#   2 - Item
-#######################################
-function check_item(){
-  if [[ $1 = *$2* ]]
-  then
-    print_color "green" "Item $2 is present on the web page"
-  else
-    print_color "red" "Item $2 is not present on the web page"
-  fi
-}
-
-
-
-
-
-
-echo "---------------- Setup Database Server ------------------"
-
-# Install and configure firewalld
-print_color "green" "Installing FirewallD.. "
+print_green "installing firewalld"
 sudo yum install -y firewalld
-
-print_color "green" "Installing FirewallD.. "
 sudo systemctl start firewalld
 sudo systemctl enable firewalld
+sudo systemctl status firewalld
 
-# Check FirewallD Service is running
-check_service_status firewalld
+active_state firewalld
 
-# Install and configure Maria-DB
-print_color "green" "Installing MariaDB Server.."
+
+#Install and configure MariaDB
+print_green "install and start mariaDB"
 sudo yum install -y mariadb-server
-
-print_color "green" "Starting MariaDB Server.."
 sudo systemctl start mariadb
 sudo systemctl enable mariadb
+active_state mariadb
 
-# Check FirewallD Service is running
-check_service_status mariadb
-
-# Configure Firewall rules for Database
-print_color "green" "Configuring FirewallD rules for database.."
+#Add FirewallD rules for database
+print_green "add firewall rules to db"
 sudo firewall-cmd --permanent --zone=public --add-port=3306/tcp
 sudo firewall-cmd --reload
+firewalld_port_rule 3306
 
-is_firewalld_rule_configured 3306
-
-
-# Configuring Database
-print_color "green" "Setting up database.."
-cat > setup-db.sql <<-EOF
-  CREATE DATABASE ecomdb;
-  CREATE USER 'ecomuser'@'localhost' IDENTIFIED BY 'ecompassword';
-  GRANT ALL PRIVILEGES ON *.* TO 'ecomuser'@'localhost';
-  FLUSH PRIVILEGES;
+#configure DB
+print_green "configuring DB..."
+cat > configure-db.sql <<-EOF
+CREATE DATABASE ecomdb;
+CREATE USER 'ecomuser'@'localhost' IDENTIFIED BY 'ecompassword';
+GRANT ALL PRIVILEGES ON *.* TO 'ecomuser'@'localhost';
+FLUSH PRIVILEGES;
 EOF
+sudo mysql < configure-db.sql
 
-sudo mysql < setup-db.sql
-
-# Loading inventory into Database
-print_color "green" "Loading inventory data into database"
+#loading inventory data
+print_green "loading inventory data"
 cat > db-load-script.sql <<-EOF
 USE ecomdb;
 CREATE TABLE products (id mediumint(8) unsigned NOT NULL auto_increment,Name varchar(255) default NULL,Price varchar(255) default NULL, ImageUrl varchar(255) default NULL,PRIMARY KEY (id)) AUTO_INCREMENT=1;
 
 INSERT INTO products (Name,Price,ImageUrl) VALUES ("Laptop","100","c-1.png"),("Drone","200","c-2.png"),("VR","300","c-3.png"),("Tablet","50","c-5.png"),("Watch","90","c-6.png"),("Phone Covers","20","c-7.png"),("Phone","80","c-8.png"),("Laptop","150","c-4.png");
-
 EOF
 
 sudo mysql < db-load-script.sql
 
-mysql_db_results=$(sudo mysql -e "use ecomdb; select * from products;")
-
-if [[ $mysql_db_results == *Laptop* ]]
+mysql_result=$(sudo mysql -e "use ecomdb; select * from products;")
+if [[ $mysql_results = *Laptop* ]]
 then
-  print_color "green" "Inventory data loaded into MySQl"
+    print_color "green" "inventory data loaded"
 else
-  print_color "green" "Inventory data not loaded into MySQl"
-  exit 1
+    print_color "red" "inventory data not loaded."
 fi
 
-
-print_color "green" "---------------- Setup Database Server - Finished ------------------"
-
-print_color "green" "---------------- Setup Web Server ------------------"
-
-# Install web server packages
-print_color "green" "Installing Web Server Packages .."
+#------web-server-configuration----------------------
+print_green "configuring web-server"
+#install apache web server and php
 sudo yum install -y httpd php php-mysqlnd
 
-# Configure firewalld rules
-print_color "green" "Configuring FirewallD rules.."
+#configure firewall rule for web server
+print_green "configuring firewalld rule for webserver.."
 sudo firewall-cmd --permanent --zone=public --add-port=80/tcp
 sudo firewall-cmd --reload
+firewalld_port_rule 80
 
-is_firewalld_rule_configured 80
 
-# Update index.php
+#start and enable httpd service
+print_green "starting web-service..."
 sudo sed -i 's/index.html/index.php/g' /etc/httpd/conf/httpd.conf
-
-# Start httpd service
-print_color "green" "Start httpd service.."
-sudo systemctl  start httpd
+sudo systemctl start httpd
 sudo systemctl enable httpd
+active_state httpd
 
-# Check FirewallD Service is running
-check_service_status httpd
-
-# Download code
-print_color "green" "Install GIT.."
+#install git and download source code repo
+print_green "cloning repo"
 sudo yum install -y git
 sudo git clone https://github.com/kodekloudhub/learning-app-ecommerce.git /var/www/html/
-sudo sed -i 's#// \(.*mysqli_connect.*\)#\1#' /var/www/html/index.php
-sudo sed -i 's#// \(\$link = mysqli_connect(.*172\.20\.1\.101.*\)#\1#; s#^\(\s*\)\(\$link = mysqli_connect(\$dbHost, \$dbUser, \$dbPassword, \$dbName);\)#\1// \2#' /var/www/html/index.php
 
-print_color "green" "Updating index.php.."
+
+#replace databse IP with localhost
 sudo sed -i 's/172.20.1.101/localhost/g' /var/www/html/index.php
 
-print_color "green" "---------------- Setup Web Server - Finished ------------------"
-
-# Test Script
+#test web server if it is running
+print_green "All set!"
 web_page=$(curl http://localhost)
+check_item $web_page Drone
+check_item $web_page Laptop
+check_item $web_page VR
 
-for item in Laptop Drone VR Watch Phone
+for item in Laptop Drone VR Watch
 do
-  check_item "$web_page" $item
+    check_item $web_page $item
 done
